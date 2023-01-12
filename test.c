@@ -59,10 +59,9 @@ int main(int argc, char const *argv[])
     promise_handle_t promise3 = promise_any(manager,2,promise1,promise2);
 
     promise_then_and_catch(manager,promise3,test_then,NULL,true,test_catch_any,NULL,false);
-    promise_then_and_catch(manager,promise3,test_then,NULL,false,test_catch_any,NULL,true);
 
     promise_data_t data1 = {.ptr = strdup("data1")};
-    if(promise_reject(manager,promise1,data1,free_with_ctx,NULL)!=0)
+    if(promise_resolve(manager,promise1,data1,free_with_ctx,NULL)!=0)
         free(data1.ptr);
 
     promise_data_t data2 = {.ptr = strdup("data2")};
