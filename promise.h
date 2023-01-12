@@ -93,8 +93,18 @@ int promise_then_and_catch(
 
 typedef struct
 {
-    int n;
-    promise_data_t* data;
+    promise_data_t data;
+    struct
+    {
+        void(*free_ptr)(void*,void*);
+        void* free_ctx;
+    } internal;
+} promise_data_list_item_t;
+
+typedef struct
+{
+    int length;
+    promise_data_list_item_t* items;
 } promise_data_list_t;
 /**
  * @brief Create a new promise. Which:

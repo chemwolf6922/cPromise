@@ -50,8 +50,7 @@ typedef struct
 } promise_t;
 
 static void promise_free(promise_t* promise);
-static void promise_free_with_opt(promise_t* promise, bool do_free_data, bool do_free_reason);
-static void promise_destroy_with_ctx(void* data, void* ctx);
+static void promise_free_with_ctx(void* data, void* ctx);
 
 promise_manager_handle_t promise_manager_new()
 {
@@ -77,7 +76,7 @@ void promise_manager_free(promise_manager_handle_t manager_handle)
     if(manager)
     {
         if(manager->promises)
-            map_delete(manager->promises,promise_destroy_with_ctx,NULL);
+            map_delete(manager->promises,promise_free_with_ctx,NULL);
         free(manager);
     }
 }
@@ -128,7 +127,7 @@ void promise_destroy(promise_manager_handle_t manager_handle, promise_handle_t p
     if(!manager)
         return;
     promise_t* promise = map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
-    promise_free_with_opt(promise,true,true);
+    promise_free(promise);
 }
 
 int promise_resolve(
@@ -312,13 +311,13 @@ error:
 
 /** static functions */
 
-static void promise_free_with_opt(promise_t* promise, bool do_free_data, bool do_free_reason)
+static void promise_free(promise_t* promise)
 {
     if(promise)
     {
-        if(promise->free_data && do_free_data)
+        if(promise->free_data && (!promise->data_taken_over))
             promise->free_data(promise->resolve_data.ptr,promise->free_data_ctx);
-        if(promise->free_reason && do_free_reason)
+        if(promise->free_reason && (!promise->reason_taken_over))
             promise->free_reason(promise->reject_reason.ptr,promise->free_reason_ctx);
         promise_handler_t* handler = promise->first_handler;
         while(handler)
@@ -333,16 +332,10 @@ static void promise_free_with_opt(promise_t* promise, bool do_free_data, bool do
     }
 }
 
-static void promise_free(promise_t* promise)
-{
-    if(promise)
-        promise_free_with_opt(promise,!promise->data_taken_over,!promise->reason_taken_over);
-}
-
-static void promise_destroy_with_ctx(void* data, void* ctx)
+static void promise_free_with_ctx(void* data, void* ctx)
 {
     promise_t* promise = (promise_t*)data;
-    promise_free_with_opt(promise,true,true);
+    promise_free(promise);
 }
 
 
@@ -356,17 +349,16 @@ struct promise_group_sub_promise_ctx_s
     int index;
     promise_handle_t promise;
     promise_group_t* group;
-    void(*free_ptr)(void*, void*);
-    void* free_ctx;
 };
 
 struct promise_group_s
 {
     promise_manager_handle_t manager;
     promise_handle_t promise;
-    int n;
+    int length;
     promise_group_sub_promise_ctx_t* sub_promises;
-    promise_data_list_t data;
+    promise_data_list_t* data_list;
+    int data_count;
 };
 
 static void promise_group_free(promise_group_t* group);
@@ -379,12 +371,22 @@ static promise_group_t* promise_group_new(promise_manager_t* manager, int n, va_
         goto error;
     memset(group,0,sizeof(promise_group_t));
     group->manager = manager;
-    group->n = n;
-    group->data.n = 0;    /** resolved data count */
-    group->data.data = malloc(sizeof(promise_data_t)*n);
-    if(!group->data.data)
+    group->length = n;
+    group->data_count = 0;  /** resolve/reject data count */
+    group->data_list = malloc(sizeof(promise_data_list_t));
+    if(!group)
         goto error;
-    memset(group->data.data,0,sizeof(promise_data_t)*n);
+    memset(group->data_list,0,sizeof(promise_data_list_t));
+    group->data_list->length = n;
+    group->data_list->items = malloc(sizeof(promise_data_list_item_t)*n);
+    if(!group->data_list->items)
+        goto error;
+    memset(group->data_list->items,0,sizeof(promise_data_list_item_t)*n);
+    for(int i=0;i<n;i++)
+    {
+        group->data_list->items[i].internal.free_ptr = NULL;
+        group->data_list->items[i].internal.free_ctx = NULL;
+    }
     group->sub_promises = malloc(sizeof(promise_group_sub_promise_ctx_t)*n);
     if(!group->sub_promises)
         goto error;
@@ -395,8 +397,6 @@ static promise_group_t* promise_group_new(promise_manager_t* manager, int n, va_
         group->sub_promises[i].promise = va_arg(args,promise_handle_t);
         group->sub_promises[i].index = i;
         group->sub_promises[i].group = group;
-        group->sub_promises[i].free_ctx = NULL;
-        group->sub_promises[i].free_ptr = NULL;
     }
 
     group->promise = promise_new_internal(manager,group,promise_group_free_with_ctx,NULL);
@@ -410,21 +410,26 @@ error:
 }
 
 /** promsie_group_t data list free */
-static void promise_group_free_data_list(promise_group_t* group)
+static void promise_group_free_data_list(promise_data_list_t* list)
 {
-    if(group)
-    {
-        for(int i=0;i<group->n;i++)
+    if(list)
+    {   
+        if(list->items)
         {
-            if(group->sub_promises[i].free_ptr)
-                group->sub_promises[i].free_ptr(group->data.data[i].ptr,group->sub_promises[i].free_ctx);
-        }   
+            for(int i=0;i<list->length;i++)
+            {
+                if(list->items[i].internal.free_ptr)
+                    list->items[i].internal.free_ptr(list->items[i].data.ptr,list->items[i].internal.free_ctx);
+            }
+            free(list->items);
+        }
+        free(list);
     }
 }
 
 static void promise_group_free_data_list_with_ctx(void* data, void* ctx)
 {
-    promise_group_free_data_list((promise_group_t*)ctx);
+    promise_group_free_data_list((promise_data_list_t*)data);
 }
 
 /** promise_group_t free */
@@ -432,12 +437,14 @@ static void promise_group_free(promise_group_t* group)
 {
     if(group)
     {
-        if((group->n != group->data.n) && (group->data.data))   /** not all resolved/rejected, free data */
-            promise_group_free_data_list(group);
+        if((group->length != group->data_count) && group->data_list)   /** not all resolved/rejected, free data */
+            promise_group_free_data_list(group->data_list);
         if(group->sub_promises)
+        {
+            for(int i=0;i<group->length;i++)    /** destroy remeaning sub promises */
+                promise_destroy(group->manager,group->sub_promises[i].promise);
             free(group->sub_promises);
-        if(group->data.data)
-            free(group->data.data);
+        }
         free(group);
     }
 }
@@ -492,27 +499,21 @@ promise_handle_t promise_all(promise_manager_handle_t manager, int n,...)
 static void promise_all_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
 {
     promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
-    ctx->group->data.n++;
-    ctx->group->data.data[ctx->index] = data;
-    ctx->free_ptr = free_ptr;
-    ctx->free_ctx = free_ctx;
-    if(ctx->group->data.n == ctx->group->n)
+    ctx->group->data_count++;
+    ctx->group->data_list->items[ctx->index].data = data;
+    ctx->group->data_list->items[ctx->index].internal.free_ptr = free_ptr;
+    ctx->group->data_list->items[ctx->index].internal.free_ctx = free_ctx;
+    if(ctx->group->data_count == ctx->group->length)
     {
         /** all resolved */
-        promise_data_t data_list = {.ptr = &ctx->group->data};
-        promise_resolve(ctx->group->manager,ctx->group->promise,data_list,promise_group_free_data_list_with_ctx,ctx->group);
+        promise_data_t data_list = {.ptr = ctx->group->data_list};
+        promise_resolve(ctx->group->manager,ctx->group->promise,data_list,promise_group_free_data_list_with_ctx,NULL);
     }
 }
 
 static void promise_all_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
 {
     promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
-    /** destroy all sub promises but this one */
-    for(int i=0;i<ctx->group->n;i++)
-    {
-        if(i != ctx->index)
-            promise_destroy(ctx->group->manager,ctx->group->sub_promises[i].promise);
-    }
     /** rejct the all promise */
     promise_reject(ctx->group->manager,ctx->group->promise,data,free_ptr,free_ctx);
 }
@@ -563,12 +564,6 @@ promise_handle_t promise_any(promise_manager_handle_t manager, int n,...)
 static void promise_any_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
 {
     promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
-    /** destroy all sub promises but this one */
-    for(int i=0;i<ctx->group->n;i++)
-    {
-        if(i != ctx->index)
-            promise_destroy(ctx->group->manager,ctx->group->sub_promises[i].promise);
-    }
     /** resolve the any promise */
     promise_resolve(ctx->group->manager,ctx->group->promise,data,free_ptr,free_ctx);
 }
@@ -576,14 +571,14 @@ static void promise_any_sub_promise_then(promise_data_t data, void* user, void(*
 static void promise_any_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
 {
     promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
-    ctx->group->data.n++;
-    ctx->group->data.data[ctx->index] = data;
-    ctx->free_ptr = free_ptr;
-    ctx->free_ctx = free_ctx;
-    if(ctx->group->data.n == ctx->group->n)
+    ctx->group->data_count++;
+    ctx->group->data_list->items[ctx->index].data = data;
+    ctx->group->data_list->items[ctx->index].internal.free_ptr = free_ptr;
+    ctx->group->data_list->items[ctx->index].internal.free_ctx = free_ctx;
+    if(ctx->group->data_count == ctx->group->length)
     {
         /** all rejected */
-        promise_data_t data_list = {.ptr = &ctx->group->data};
-        promise_reject(ctx->group->manager,ctx->group->promise,data_list,promise_group_free_data_list_with_ctx,ctx->group);
+        promise_data_t data_list = {.ptr = ctx->group->data_list};
+        promise_reject(ctx->group->manager,ctx->group->promise,data_list,promise_group_free_data_list_with_ctx,NULL);
     }
 }
