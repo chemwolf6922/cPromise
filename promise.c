@@ -18,28 +18,40 @@ typedef struct promise_handler_s
     void* then_ctx;
     promise_catch_handler_t catch;
     void* catch_ctx;
+    bool takeover_data;
+    bool takeover_reason;
 } promise_handler_t;
 
 typedef struct
 {
     promise_handler_t* first_handler;
     promise_handler_t* last_handler;
+    /** resolve */
     bool resolved;
     promise_data_t resolve_data;
     void(*free_data)(void* data, void* ctx);
     void* free_data_ctx;
-    bool data_taken_over;
+    bool data_booked;               /** if there is already a handler booked the data */
+    bool data_taken_over;           /** if the data is already taken over by a handler */
+    /** reject */
     bool rejected;
     promise_data_t reject_reason;
     void(*free_reason)(void* reason, void* ctx);
     void* free_reason_ctx;
-    bool reason_taken_over;
+    bool reason_booked;             /** if there is already a handler booked the reason */
+    bool reason_taken_over;         /** if the reason is already taken over by a handler */
+    /** internal use */
+    struct
+    {
+        void* data;
+        void(*free_data)(void*, void*);
+        void* free_ctx;  
+    } internal;
 } promise_t;
 
 static void promise_free(promise_t* promise);
 static void promise_free_with_opt(promise_t* promise, bool do_free_data, bool do_free_reason);
 static void promise_destroy_with_ctx(void* data, void* ctx);
-
 
 promise_manager_handle_t promise_manager_new()
 {
@@ -70,8 +82,9 @@ void promise_manager_free(promise_manager_handle_t manager_handle)
     }
 }
 
-
-promise_handle_t promise_new(promise_manager_handle_t manager_handle)
+static promise_handle_t promise_new_internal(
+    promise_manager_handle_t manager_handle, 
+    void* user_data, void(*free_user_data)(void*,void*),void* free_user_data_ctx)
 {
     promise_manager_t* manager = (promise_manager_t*)manager_handle;
     promise_t* promise = NULL;
@@ -81,6 +94,9 @@ promise_handle_t promise_new(promise_manager_handle_t manager_handle)
     if(!promise)
         goto error;
     memset(promise,0,sizeof(promise_t));
+    promise->internal.data = user_data;
+    promise->internal.free_data = free_user_data;
+    promise->internal.free_ctx = free_user_data_ctx;
     promise->first_handler = NULL;
     promise->last_handler = NULL;
     promise->resolved = false;
@@ -89,6 +105,8 @@ promise_handle_t promise_new(promise_manager_handle_t manager_handle)
     promise->free_reason = NULL;
     promise->data_taken_over = false;
     promise->reason_taken_over = false;
+    promise->data_booked = false;
+    promise->reason_booked = false;
     promise_handle_t promise_handle = manager->id_seed++;
     /** promise handle should never overlap, not handled here */
     if(map_add(manager->promises,&promise_handle,sizeof(promise_handle),promise)==NULL)
@@ -97,6 +115,11 @@ promise_handle_t promise_new(promise_manager_handle_t manager_handle)
 error:
     promise_free(promise);
     return NULL;
+}
+
+promise_handle_t promise_new(promise_manager_handle_t manager_handle)
+{
+    return promise_new_internal(manager_handle,NULL,NULL,NULL);
 }
 
 void promise_destroy(promise_manager_handle_t manager_handle, promise_handle_t promise_handle)
@@ -128,15 +151,24 @@ int promise_resolve(
     {
         /** If there are handlers set */
         promise_handler_t* handler = promise->first_handler;
+        promise_handler_t* takeover_handler = NULL;
         while(handler)
         {
             promise_handler_t* next_handler = handler->next;
-            handler->then(promise->resolve_data,handler->then_ctx);
+            if(handler->takeover_data)
+                takeover_handler = handler; /** there can be at most one takeover handler */
+            else
+                handler->then(promise->resolve_data,handler->then_ctx,NULL,NULL);
             handler = next_handler;
         }
-        /** free promise and remove from promises */
-        promise_free(promise);
-        map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        if(takeover_handler)    /** call the takeover handler last */
+        {
+            promise->data_taken_over = true;
+            takeover_handler->then(promise->resolve_data,takeover_handler->then_ctx,free_data,ctx);
+        }
+        /** free promise and remove from promises if it is still in promises */
+        promise_t* old_promise = map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        promise_free(old_promise);
     } 
     return 0;
 error:
@@ -163,16 +195,25 @@ int promise_reject(
     {
         /** If there are handlers set */
         promise_handler_t* handler = promise->first_handler;
+        promise_handler_t* takeover_handler = NULL;
         while(handler)
         {
             promise_handler_t* next_handler = handler->next;
-            handler->catch(promise->reject_reason,handler->catch_ctx);
+            if(handler->takeover_reason)
+                takeover_handler = handler;
+            else
+                handler->catch(promise->reject_reason,handler->catch_ctx,NULL,NULL);
             handler = next_handler;
         }
-        /** free promise and remove from promises */
-        promise_free(promise);
-        map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
-    } 
+        if(takeover_handler)    /** call the take over handler last */
+        {
+            promise->reason_taken_over = true;
+            takeover_handler->catch(promise->reject_reason,takeover_handler->catch_ctx,free_reason,ctx);
+        }
+        /** free promise and remove from promises if it is still in promises */
+        promise_t* old_promise = map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        promise_free(old_promise);
+    }
     return 0;
 error:
     return -1;
@@ -191,9 +232,9 @@ int promise_then_and_catch(
         goto error;
     if((!then) || (!catch))
         goto error;
-    if(promise->data_taken_over && takeover_data)
+    if(promise->data_booked && takeover_data)
         goto error;
-    if(promise->reason_taken_over && takeover_reason)
+    if(promise->reason_booked && takeover_reason)
         goto error;
     promise_handler_t* new_handler = malloc(sizeof(promise_handler_t));
     if(!new_handler)
@@ -203,6 +244,8 @@ int promise_then_and_catch(
     new_handler->then_ctx = then_ctx;
     new_handler->catch = catch;
     new_handler->catch_ctx = catch_ctx;
+    new_handler->takeover_data = takeover_data;
+    new_handler->takeover_reason = takeover_reason;
     new_handler->next = NULL;
     if(promise->last_handler == NULL)
     {
@@ -214,35 +257,53 @@ int promise_then_and_catch(
         promise->last_handler->next = new_handler;
         promise->last_handler = new_handler;
     }
-    promise->data_taken_over = promise->data_taken_over || takeover_data;
-    promise->reason_taken_over = promise->reason_taken_over || takeover_reason;
+    promise->data_booked = promise->data_booked || takeover_data;
+    promise->reason_booked = promise->reason_booked || takeover_reason;
     if(promise->resolved)
     {
         /** Promise is already resolved but not handled */
         promise_handler_t* handler = promise->first_handler;
+        promise_handler_t* takeover_handler = NULL;
         while(handler)
         {
             promise_handler_t* next_handler = handler->next;
-            handler->then(promise->resolve_data,handler->then_ctx);
+            if(handler->takeover_data)
+                takeover_handler = handler;
+            else
+                handler->then(promise->resolve_data,handler->then_ctx,NULL,NULL);
             handler = next_handler;
         }
-        /** free promise and remove from promises */
-        promise_free(promise);
-        map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        if(takeover_handler)
+        {
+            promise->data_taken_over = true;
+            takeover_handler->then(promise->resolve_data,takeover_handler->then_ctx,promise->free_data,promise->free_data_ctx);
+        }
+        /** free promise and remove from promises if it is still in promises */
+        promise_t* old_promise = map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        promise_free(old_promise);
     }
     else if(promise->rejected)
     {
         /** Promise is already rejected but not catched */
         promise_handler_t* handler = promise->first_handler;
+        promise_handler_t* takeover_handler = NULL;
         while(handler)
         {
             promise_handler_t* next_handler = handler->next;
-            handler->catch(promise->reject_reason,handler->catch_ctx);
+            if(handler->takeover_reason)
+                takeover_handler = handler;
+            else
+                handler->catch(promise->reject_reason,handler->catch_ctx,NULL,NULL);
             handler = next_handler;
         }
-        /** free promise and remove from promises */
-        promise_free(promise);
-        map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        if(takeover_handler)
+        {
+            promise->reason_taken_over = true;
+            takeover_handler->catch(promise->reject_reason,takeover_handler->catch_ctx,promise->free_reason,promise->free_reason_ctx);
+        }
+        /** free promise and remove from promises if it is still in promises */
+        promise_t* old_promise = map_remove(manager->promises,&promise_handle,sizeof(promise_handle));
+        promise_free(old_promise);
     }
     return 0;
 error:
@@ -266,6 +327,8 @@ static void promise_free_with_opt(promise_t* promise, bool do_free_data, bool do
             free(handler);
             handler = next;
         }
+        if(promise->internal.free_data)
+            promise->internal.free_data(promise->internal.data,promise->internal.free_ctx);
         free(promise);
     }
 }
@@ -280,4 +343,247 @@ static void promise_destroy_with_ctx(void* data, void* ctx)
 {
     promise_t* promise = (promise_t*)data;
     promise_free_with_opt(promise,true,true);
+}
+
+
+/** promise group ****************************************/
+
+typedef struct promise_group_sub_promise_ctx_s promise_group_sub_promise_ctx_t;
+typedef struct promise_group_s promise_group_t;
+
+struct promise_group_sub_promise_ctx_s
+{
+    int index;
+    promise_handle_t promise;
+    promise_group_t* group;
+    void(*free_ptr)(void*, void*);
+    void* free_ctx;
+};
+
+struct promise_group_s
+{
+    promise_manager_handle_t manager;
+    promise_handle_t promise;
+    int n;
+    promise_group_sub_promise_ctx_t* sub_promises;
+    promise_data_list_t data;
+};
+
+static void promise_group_free(promise_group_t* group);
+static void promise_group_free_with_ctx(void* data, void* ctx);
+
+static promise_group_t* promise_group_new(promise_manager_t* manager, int n, va_list args)
+{
+    promise_group_t* group = malloc(sizeof(promise_group_t));
+    if(!group)
+        goto error;
+    memset(group,0,sizeof(promise_group_t));
+    group->manager = manager;
+    group->n = n;
+    group->data.n = 0;    /** resolved data count */
+    group->data.data = malloc(sizeof(promise_data_t)*n);
+    if(!group->data.data)
+        goto error;
+    memset(group->data.data,0,sizeof(promise_data_t)*n);
+    group->sub_promises = malloc(sizeof(promise_group_sub_promise_ctx_t)*n);
+    if(!group->sub_promises)
+        goto error;
+    memset(group->sub_promises,0,sizeof(promise_group_sub_promise_ctx_t)*n);
+
+    for(int i=0;i<n;i++)
+    {
+        group->sub_promises[i].promise = va_arg(args,promise_handle_t);
+        group->sub_promises[i].index = i;
+        group->sub_promises[i].group = group;
+        group->sub_promises[i].free_ctx = NULL;
+        group->sub_promises[i].free_ptr = NULL;
+    }
+
+    group->promise = promise_new_internal(manager,group,promise_group_free_with_ctx,NULL);
+    if(!group->promise)
+        goto error;
+
+    return group;
+error:
+    promise_group_free(group);
+    return NULL;
+}
+
+/** promsie_group_t data list free */
+static void promise_group_free_data_list(promise_group_t* group)
+{
+    if(group)
+    {
+        for(int i=0;i<group->n;i++)
+        {
+            if(group->sub_promises[i].free_ptr)
+                group->sub_promises[i].free_ptr(group->data.data[i].ptr,group->sub_promises[i].free_ctx);
+        }   
+    }
+}
+
+static void promise_group_free_data_list_with_ctx(void* data, void* ctx)
+{
+    promise_group_free_data_list((promise_group_t*)ctx);
+}
+
+/** promise_group_t free */
+static void promise_group_free(promise_group_t* group)
+{
+    if(group)
+    {
+        if((group->n != group->data.n) && (group->data.data))   /** not all resolved/rejected, free data */
+            promise_group_free_data_list(group);
+        if(group->sub_promises)
+            free(group->sub_promises);
+        if(group->data.data)
+            free(group->data.data);
+        free(group);
+    }
+}
+
+static void promise_group_free_with_ctx(void* data, void* ctx)
+{
+    promise_group_free((promise_group_t*)data);
+}
+
+/** promise.all ****************************************/
+
+static void promise_all_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
+static void promise_all_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
+
+
+promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list args)
+{
+    promise_group_t* all = promise_group_new(manager,n,args);
+    if(!all)
+        goto error;
+
+    /** await all sub promises */
+    for(int i=0;i<n;i++)
+    {
+        if(promise_then_and_catch(
+            manager,all->sub_promises[i].promise,
+            promise_all_sub_promise_then,&(all->sub_promises[i]),true,
+            promise_all_sub_promise_catch,&(all->sub_promises[i]),true)!=0)
+        {
+            goto error; 
+        }  
+    }
+
+    return all->promise;
+error:
+    if(all)
+        promise_destroy(manager,all->promise);
+    return NULL;
+}
+
+
+promise_handle_t promise_all(promise_manager_handle_t manager, int n,...)
+{
+    promise_handle_t result = NULL;
+    va_list args;
+    va_start(args,n);
+    result = promise_all_v(manager,n,args);
+    va_end(args);
+    return result;
+}
+
+static void promise_all_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
+{
+    promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
+    ctx->group->data.n++;
+    ctx->group->data.data[ctx->index] = data;
+    ctx->free_ptr = free_ptr;
+    ctx->free_ctx = free_ctx;
+    if(ctx->group->data.n == ctx->group->n)
+    {
+        /** all resolved */
+        promise_data_t data_list = {.ptr = &ctx->group->data};
+        promise_resolve(ctx->group->manager,ctx->group->promise,data_list,promise_group_free_data_list_with_ctx,ctx->group);
+    }
+}
+
+static void promise_all_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
+{
+    promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
+    /** destroy all sub promises but this one */
+    for(int i=0;i<ctx->group->n;i++)
+    {
+        if(i != ctx->index)
+            promise_destroy(ctx->group->manager,ctx->group->sub_promises[i].promise);
+    }
+    /** rejct the all promise */
+    promise_reject(ctx->group->manager,ctx->group->promise,data,free_ptr,free_ctx);
+}
+
+
+/** promise.any ****************************************/
+
+static void promise_any_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
+static void promise_any_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
+
+
+promise_handle_t promise_any_v(promise_manager_handle_t manager, int n, va_list args)
+{
+    promise_group_t* any = promise_group_new(manager,n,args);
+    if(!any)
+        goto error;
+
+    /** await all sub promises */
+    for(int i=0;i<n;i++)
+    {
+        if(promise_then_and_catch(
+            manager,any->sub_promises[i].promise,
+            promise_any_sub_promise_then,&(any->sub_promises[i]),true,
+            promise_any_sub_promise_catch,&(any->sub_promises[i]),true)!=0)
+        {
+            goto error; 
+        }  
+    }
+
+    return any->promise;
+error:
+    if(any)
+        promise_destroy(manager,any->promise);
+    return NULL;
+}
+
+
+promise_handle_t promise_any(promise_manager_handle_t manager, int n,...)
+{
+    promise_handle_t result = NULL;
+    va_list args;
+    va_start(args,n);
+    result = promise_any_v(manager,n,args);
+    va_end(args);
+    return result;
+}
+
+static void promise_any_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
+{
+    promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
+    /** destroy all sub promises but this one */
+    for(int i=0;i<ctx->group->n;i++)
+    {
+        if(i != ctx->index)
+            promise_destroy(ctx->group->manager,ctx->group->sub_promises[i].promise);
+    }
+    /** resolve the any promise */
+    promise_resolve(ctx->group->manager,ctx->group->promise,data,free_ptr,free_ctx);
+}
+
+static void promise_any_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx)
+{
+    promise_group_sub_promise_ctx_t* ctx = (promise_group_sub_promise_ctx_t*)user;
+    ctx->group->data.n++;
+    ctx->group->data.data[ctx->index] = data;
+    ctx->free_ptr = free_ptr;
+    ctx->free_ctx = free_ctx;
+    if(ctx->group->data.n == ctx->group->n)
+    {
+        /** all rejected */
+        promise_data_t data_list = {.ptr = &ctx->group->data};
+        promise_reject(ctx->group->manager,ctx->group->promise,data_list,promise_group_free_data_list_with_ctx,ctx->group);
+    }
 }

@@ -2,7 +2,7 @@ CFLAGS?=-O3
 override CFLAGS+=-MMD -MP
 LDFLAGS?=
 STATIC_LIB=libpromise.a
-LIB_SRC=promise.c promise_all.c promise_any.c
+LIB_SRC=promise.c
 TEST_SRC=test.c
 ALL_SRC=$(TEST_SRC) $(LIB_SRC)
 

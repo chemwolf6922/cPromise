@@ -1,7 +1,8 @@
 #ifndef __PROMISE_H
 #define __PROMISE_H
 
-#include "stdbool.h"
+#include <stdbool.h>
+#include <stdarg.h>
 
 typedef void* promise_manager_handle_t;
 
@@ -63,8 +64,8 @@ int promise_reject(
     promise_manager_handle_t manager, promise_handle_t promise, 
     promise_data_t reason, void(*free_reason)(void*,void*), void* ctx);
 
-typedef void(*promise_then_handler_t)(const promise_data_t data, void* ctx);
-typedef void(*promise_catch_handler_t)(const promise_data_t reason, void* ctx);
+typedef void(*promise_then_handler_t)(promise_data_t data, void* ctx, void(*free_ptr)(void*, void*), void* free_ctx);
+typedef void(*promise_catch_handler_t)(promise_data_t reason, void* ctx, void(*free_ptr)(void*, void*), void* free_ctx);
 /**
  * @brief Assign then and catch handler. 
  * The promise will be freed after all the handlers assigned to it is called. 
@@ -89,11 +90,22 @@ int promise_then_and_catch(
     promise_manager_handle_t manager, promise_handle_t promise, 
     promise_then_handler_t then, void* then_ctx, bool takeover_data,
     promise_catch_handler_t catch, void* catch_ctx, bool takeover_reason);
+
+typedef struct
+{
+    int n;
+    promise_data_t* data;
+} promise_data_list_t;
 /**
  * @brief Create a new promise. Which:
  * will be resolved if all of the promises are resolved.
  * will be rejected if any of the promises is rejected. 
- * @attention Free this will not affect the promises associated with it.
+ * The resolved value is a list of all the sub promises' resolve values.
+ * The rejected reason is the first rejected sub promise's reject reason.
+ * @attention Sub promises are strongly linked to this promise. DO NOT use them for other purposes.
+ * @attention Sub promises' data are taken over by default.
+ * @attention User MUST handle the data list content
+ * @attention User MUST NOT use the data list outside and free_data of then
  * 
  * @param manager 
  * @param n number of promises
@@ -101,11 +113,17 @@ int promise_then_and_catch(
  * @return promise_handle_t or NULL on error
  */
 promise_handle_t promise_all(promise_manager_handle_t manager, int n,...);
+promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list args);
+
 /**
  * @brief Create a new promise. Which:
  * will be resolved if any of the promises is resolved.
  * will be rejected if all of the promises are rejected.
- * @attention Free this will not affect the promises associated with it.
+ * The resolved value is the first resovled sub promise's resolve value
+ * The rejected reason is a list of all the sub promises' reject reasons
+ * @attention Sub promises are strongly linked to this promise. DO NOT use them for other purposes.
+ * @attention Sub promises' reject reason are taken over by default
+ * @attention Sub promises MUST have their free_data set if it is allocated.
  * 
  * @param manager 
  * @param n number of promises
@@ -113,7 +131,7 @@ promise_handle_t promise_all(promise_manager_handle_t manager, int n,...);
  * @return promise_handle_t or NULL on error
  */
 promise_handle_t promise_any(promise_manager_handle_t manager, int n,...);
-
+promise_handle_t promise_any_v(promise_manager_handle_t manager, int n, va_list args);
 
 #endif
 
