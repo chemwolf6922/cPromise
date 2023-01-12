@@ -35,6 +35,7 @@ $(LIB_MAP):
 
 -include $(TEST_SRC:.c=.d)
 
+.PHONY:clean
 clean:
 	$(MAKE) -C map clean
 	rm -f *.oo *.o *.d test $(STATIC_LIB) 
