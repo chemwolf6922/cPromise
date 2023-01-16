@@ -86,7 +86,7 @@ typedef void(*promise_catch_handler_t)(promise_data_t reason, void* ctx, void(*f
  * @param takeover_reason If this is set. The reason will not be freed when the promise is freed
  * @return int 0 on success, 1 on error
  */
-int promise_then_and_catch(
+int promise_await(
     promise_manager_handle_t manager, promise_handle_t promise, 
     promise_then_handler_t then, void* then_ctx, bool takeover_data,
     promise_catch_handler_t catch, void* catch_ctx, bool takeover_reason);

@@ -218,7 +218,7 @@ error:
     return -1;
 }
 
-int promise_then_and_catch(
+int promise_await(
     promise_manager_handle_t manager_handle, promise_handle_t promise_handle, 
     promise_then_handler_t then, void* then_ctx, bool takeover_data,
     promise_catch_handler_t catch, void* catch_ctx, bool takeover_reason)
@@ -469,7 +469,7 @@ promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list 
     /** await all sub promises */
     for(int i=0;i<n;i++)
     {
-        if(promise_then_and_catch(
+        if(promise_await(
             manager,all->sub_promises[i].promise,
             promise_all_sub_promise_then,&(all->sub_promises[i]),true,
             promise_all_sub_promise_catch,&(all->sub_promises[i]),true)!=0)
@@ -534,7 +534,7 @@ promise_handle_t promise_any_v(promise_manager_handle_t manager, int n, va_list 
     /** await all sub promises */
     for(int i=0;i<n;i++)
     {
-        if(promise_then_and_catch(
+        if(promise_await(
             manager,any->sub_promises[i].promise,
             promise_any_sub_promise_then,&(any->sub_promises[i]),true,
             promise_any_sub_promise_catch,&(any->sub_promises[i]),true)!=0)

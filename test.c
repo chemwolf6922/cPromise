@@ -94,7 +94,7 @@ int main(int argc, char const *argv[])
 
     promise_handle_t promise4_1 = promise_all(manager,2,promise3_1,promise3_2);
 
-    promise_then_and_catch(manager,promise4_1,test_then_all3,NULL,true,test_catch,NULL,true);
+    promise_await(manager,promise4_1,test_then_all3,NULL,true,test_catch,NULL,true);
 
     promise_data_t data1 = {.ptr = strdup("data1")};
     if(promise_resolve(manager,promise1,data1,free_with_ctx,NULL)!=0)
