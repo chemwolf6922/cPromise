@@ -45,7 +45,7 @@ typedef union
  * @param data User of this should know the type of it.
  * @param free_data Called when the promise is destroyed or is handled w/o data taken over. 
  * @param ctx ctx for free_data
- * @return int 0 on success, 1 on error
+ * @return int 0 on success, -1 on error
  */
 int promise_resolve(
     promise_manager_handle_t manager, promise_handle_t promise, 
@@ -58,7 +58,7 @@ int promise_resolve(
  * @param reason User of this should know the type of it.
  * @param free_reason Called when the promise is destroed or is handled w/o data taken over.
  * @param ctx ctx for free_reason
- * @return int 0 on success, 1 on error
+ * @return int 0 on success, -1 on error
  */
 int promise_reject(
     promise_manager_handle_t manager, promise_handle_t promise, 
@@ -84,7 +84,7 @@ typedef void(*promise_catch_handler_t)(promise_data_t reason, void* ctx, void(*f
  * @param catch not nullable
  * @param catch_ctx 
  * @param takeover_reason If this is set. The reason will not be freed when the promise is freed
- * @return int 0 on success, 1 on error
+ * @return int 0 on success, -1 on error
  */
 int promise_await(
     promise_manager_handle_t manager, promise_handle_t promise, 
