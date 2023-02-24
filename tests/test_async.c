@@ -36,6 +36,7 @@ promise_handle_t async_process3(int a, int b)
     *code = -1;
     promise_reject(manager,promise,(promise_data_t){.ptr=code},free_with_ctx,NULL);
     return promise;
+    // return NULL;
 }
 
 #define GLOBAL_PROMISE_MANAGER (manager)
@@ -51,7 +52,7 @@ ASYNC(test,(int a, int b),
     {
         TRY
         {
-            // AWAIT(async_process3(VAR(a),*VAR(c)));
+            AWAIT(async_process3(VAR(a),*VAR(c)));
             SYNC_IN_TRY(
                 *VAR(c)*=2;
                 THROW(ptr,NULL,NULL,NULL);

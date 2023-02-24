@@ -68,10 +68,30 @@ static int async_push_async_data(async_ctx_t* ctx)
     return 0;
 }
 
+#define _UNIQUE_PROMISE_NAME2(x,y) x ## y
+#define _UNIQUE_PROMISE_NAME(x,y) _UNIQUE_PROMISE_NAME2(x,y)
+#define UNIQUE_PROMISE_NAME _UNIQUE_PROMISE_NAME(promise_,__LINE__)
+
+/**
+ * @brief Init an argument
+ */
 #define ARG_INIT(v) do{ variables->v = v; }while(0)
 
+/**
+ * @brief Use this to access the context data in an async function
+ */
 #define VAR(v) (variables_545bb8c->v)
 
+/**
+ * @brief Define an async function
+ * 
+ * @param name function name
+ * @param params function parameters
+ * @param var_list context data, NEEDS to include function parameters
+ * @param arg_init_script copy function parameters into context data using ARG_INIT() macro
+ * 
+ * @return promise_handle_t
+ */
 #define ASYNC(name,params,var_list,arg_init_script) \
 static void _##name (async_ctx_t* ctx); \
 promise_handle_t name params\
@@ -117,7 +137,9 @@ static void _##name(async_ctx_t* ctx_545bb8c)\
     {\
     case 0:
 
-
+/**
+ * @brief End an async function.
+ */
 #define ASYNC_END()\
     }}\
 final:\
@@ -132,14 +154,28 @@ final:\
     free(ctx_545bb8c);\
     return;
 
-
+/**
+ * @brief Resolve the promise and end the async function
+ * 
+ * @param type promise_data_t type, number, boolean or ptr
+ * @param value return value
+ * @param free_ptr free function for value if it is allocated
+ * @param free_ctx free context for value
+ */
 #define RETURN(type,value,free_ptr,free_ctx)\
 do{\
     promise_resolve(ctx_545bb8c->manager,ctx_545bb8c->promise,(promise_data_t){.type=value},free_ptr,free_ctx);\
     goto final;\
 }while(0);
 
-
+/**
+ * @brief Throw an error insdie the async function. If it is not catched, the promise is rejected.
+ * 
+ * @param type promise_data_t type, number, boolean or ptr
+ * @param value return value
+ * @param free_ptr free function for value if it is allocated
+ * @param free_ctx free context for value
+ */
 #define THROW(type,value,free_ptr,free_ctx)\
 do{\
     if(ctx_545bb8c->has_catch)\
@@ -157,13 +193,19 @@ do{\
 }while(0);
 
 
-/** DO NOT nest TRY CATCH !!! */
+/**
+ * @brief Start TRY {} CATCH(e) {} structure
+ * @attention DO NOT nest TRY CATCH !!!
+ */
 #define TRY \
 do{\
     ctx_545bb8c->has_catch=true;\
 }while(0);
 
-
+/**
+ * @brief Complete TRY {} CATCH(e) {} structure
+ * @param error name of the error, a promise_data_t
+ */
 #define CATCH(error)\
     for(promise_data_t error = ctx_545bb8c->last_async_data;\
     ctx_545bb8c->has_catch?\
@@ -173,7 +215,12 @@ do{\
     false;\
     )
 
-
+/**
+ * @brief Run sync code in try catch
+ * @attention MUST use this for try catch to work properly
+ * 
+ * @param expr the sync code to run.
+ */
 #define SYNC_IN_TRY(expr) \
 do{\
     if(!ctx_545bb8c->is_error)\
@@ -183,12 +230,24 @@ do{\
 }while(0);
 
 
+/**
+ * @brief Await a promise
+ * 
+ * @param expr the code to generate a promise
+ */
 #define AWAIT(expr)\
 do{\
     if(!ctx_545bb8c->is_error)\
     {\
         ctx_545bb8c->step = __LINE__;\
-        promise_await(ctx_545bb8c->manager,expr,async_then,ctx_545bb8c,false,async_catch,ctx_545bb8c,true);\
+        if(promise_await(ctx_545bb8c->manager,expr,async_then,ctx_545bb8c,false,async_catch,ctx_545bb8c,true)!=0)\
+        {\
+            ctx_545bb8c->is_error=true;\
+            ctx_545bb8c->last_async_data=(promise_data_t){.ptr=NULL};\
+            ctx_545bb8c->last_async_data_free=NULL;\
+            ctx_545bb8c->last_async_data_ctx=NULL;\
+            ctx_545bb8c->func(ctx_545bb8c);\
+        }\
         return;\
     case __LINE__:\
         if(ctx_545bb8c->is_error && (!ctx_545bb8c->has_catch))\
@@ -199,13 +258,26 @@ do{\
     }\
 }while(0);
 
-
+/**
+ * @brief Await a promise and assign the result to dst
+ * 
+ * @param type type of data to copy 
+ * @param dst double, booelan or pointer
+ * @param expr the code to generate a promise
+ */
 #define AWAIT_RESULT(type,dst,expr)\
 do{\
     if(!ctx_545bb8c->is_error)\
     {\
         ctx_545bb8c->step = __LINE__;\
-        promise_await(ctx_545bb8c->manager,expr,async_then,ctx_545bb8c,true,async_catch,ctx_545bb8c,true);\
+        if(promise_await(ctx_545bb8c->manager,expr,async_then,ctx_545bb8c,true,async_catch,ctx_545bb8c,true)!=0)\
+        {\
+            ctx_545bb8c->is_error=true;\
+            ctx_545bb8c->last_async_data=(promise_data_t){.ptr=NULL};\
+            ctx_545bb8c->last_async_data_free=NULL;\
+            ctx_545bb8c->last_async_data_ctx=NULL;\
+            ctx_545bb8c->func(ctx_545bb8c);\
+        }\
         return;\
     case __LINE__:\
         if(!ctx_545bb8c->is_error)\
