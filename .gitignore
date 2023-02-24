@@ -1,6 +1,3 @@
-.vscode
-*.o
-*.oo
-*.d
-*.a
-test
+/.vscode
+/build
+/libpromise.a

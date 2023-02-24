@@ -1,41 +1,43 @@
+LIBPROMISE_DIR:=$(shell pwd)
+BUILD_DIR=$(LIBPROMISE_DIR)/build/
+
 CFLAGS?=-O3
 override CFLAGS+=-MMD -MP
 LDFLAGS?=
-STATIC_LIB=libpromise.a
-LIB_SRC=promise.c
-TEST_SRC=test.c
-ALL_SRC=$(TEST_SRC) $(LIB_SRC)
 
-LIB_MAP=map/libmap.a
-LIBS=$(LIB_MAP)
+STATIC_LIB=libpromise.a
+
+LIB_SRC=promise.c
+PACK_LIBS=libmap.a
 
 .PHONY:all
-all:test lib
-
-test:$(patsubst %.c,%.oo,$(TEST_SRC)) $(patsubst %.c,%.o,$(LIB_SRC)) $(LIBS)
-	$(CC) $(LDFLAGS) -o $@ $^
+all:lib
 
 .PHONY:lib
 lib:$(STATIC_LIB)
 
-$(STATIC_LIB):$(patsubst %.c,%.o,$(LIB_SRC)) $(LIBS)
-	for lib in $(LIBS); do \
-		$(AR) -x $$lib; \
-	done
-	$(AR) -rcs $@ *.o
+$(STATIC_LIB):$(patsubst %.c,$(BUILD_DIR)%.o,$(LIB_SRC)) $(patsubst %.a,$(BUILD_DIR)%,$(PACK_LIBS))
+	$(AR) -rcs $@ $(patsubst %.c,$(BUILD_DIR)%.o,$(LIB_SRC))
+	$(AR) -qcs $@ $(patsubst %.a,$(BUILD_DIR)%/*,$(PACK_LIBS))
 
-$(LIB_MAP):
+$(BUILD_DIR)libmap.a:
 	$(MAKE) -C map lib
+	cp map/libmap.a $@
 
-%.oo:%.c
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(BUILD_DIR)lib%:$(BUILD_DIR)lib%.a
+	mkdir -p $@
+	cd $@; ar -x $<
+
+$(BUILD_DIR)%.o:%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $@ -c $<
 
-%.o:%.c
-	$(CC) $(CFLAGS) -c $<
-
--include $(TEST_SRC:.c=.d)
+-include $(patsubst %.c,$(BUILD_DIR)/%.d,$(SRC))
 
 .PHONY:clean
 clean:
 	$(MAKE) -C map clean
-	rm -f *.oo *.o *.d test $(STATIC_LIB) 
+	rm -rf $(BUILD_DIR)
+	rm -f $(STATIC_LIB) 
