@@ -68,10 +68,9 @@ static int async_push_async_data(async_ctx_t* ctx)
     return 0;
 }
 
+#define ARG_INIT(v) do{ variables->v = v; }while(0)
 
-#define ARG_INIT(v) variables->v = v
-
-#define VAR(v) (variables->v)
+#define VAR(v) (variables_545bb8c->v)
 
 #define ASYNC(name,params,var_list,arg_init_script) \
 static void _##name (async_ctx_t* ctx); \
@@ -92,7 +91,7 @@ promise_handle_t name params\
     ctx->func = _##name;\
     struct\
     {\
-        int dummy;\
+        int dummy_545bb8c;\
         var_list\
     }* variables = malloc(sizeof(*variables));\
     if(!variables)\
@@ -107,14 +106,14 @@ promise_handle_t name params\
     _##name(ctx);\
     return promise;\
 };\
-static void _##name(async_ctx_t* ctx)\
+static void _##name(async_ctx_t* ctx_545bb8c)\
 {\
     struct\
     {\
-        int dummy;\
+        int dummy_545bb8c;\
         var_list\
-    }* variables = ctx->variables;\
-    switch(ctx->step)\
+    }* variables_545bb8c = ctx_545bb8c->variables;\
+    switch(ctx_545bb8c->step)\
     {\
     case 0:
 
@@ -122,37 +121,37 @@ static void _##name(async_ctx_t* ctx)\
 #define ASYNC_END()\
     }}\
 final:\
-    while(ctx->async_data_list)\
+    while(ctx_545bb8c->async_data_list)\
     {\
-        ctx->async_data_list->free_ptr(ctx->async_data_list->ptr,ctx->async_data_list->free_ctx);\
-        async_data_list_t* next = ctx->async_data_list->next;\
-        free(ctx->async_data_list);\
-        ctx->async_data_list = next;\
+        ctx_545bb8c->async_data_list->free_ptr(ctx_545bb8c->async_data_list->ptr,ctx_545bb8c->async_data_list->free_ctx);\
+        async_data_list_t* next = ctx_545bb8c->async_data_list->next;\
+        free(ctx_545bb8c->async_data_list);\
+        ctx_545bb8c->async_data_list = next;\
     }\
-    free(ctx->variables);\
-    free(ctx);\
+    free(ctx_545bb8c->variables);\
+    free(ctx_545bb8c);\
     return;
 
 
 #define RETURN(type,value,free_ptr,free_ctx)\
 do{\
-    promise_resolve(ctx->manager,ctx->promise,(promise_data_t){.type=value},free_ptr,free_ctx);\
+    promise_resolve(ctx_545bb8c->manager,ctx_545bb8c->promise,(promise_data_t){.type=value},free_ptr,free_ctx);\
     goto final;\
 }while(0);
 
 
 #define THROW(type,value,free_ptr,free_ctx)\
 do{\
-    if(ctx->has_catch)\
+    if(ctx_545bb8c->has_catch)\
     {\
-        ctx->is_error=true;\
-        ctx->last_async_data=(promise_data_t){.type=value};\
-        ctx->last_async_data_free=free_ptr;\
-        ctx->last_async_data_ctx=free_ctx;\
+        ctx_545bb8c->is_error=true;\
+        ctx_545bb8c->last_async_data=(promise_data_t){.type=value};\
+        ctx_545bb8c->last_async_data_free=free_ptr;\
+        ctx_545bb8c->last_async_data_ctx=free_ctx;\
     }\
     else\
     {\
-        promise_reject(ctx->manager,ctx->promise,(promise_data_t){.type=value},free_ptr,free_ctx);\
+        promise_reject(ctx_545bb8c->manager,ctx_545bb8c->promise,(promise_data_t){.type=value},free_ptr,free_ctx);\
         goto final;\
     }\
 }while(0);
@@ -161,19 +160,23 @@ do{\
 /** DO NOT nest TRY CATCH !!! */
 #define TRY \
 do{\
-    ctx->has_catch=true;\
+    ctx_545bb8c->has_catch=true;\
 }while(0);
 
 
 #define CATCH(error)\
-    for(promise_data_t error = ctx->last_async_data;\
-    ctx->has_catch?(((ctx->has_catch=false)||ctx->is_error)?(((ctx->is_error=false),async_push_async_data(ctx))||true):false):false;\
+    for(promise_data_t error = ctx_545bb8c->last_async_data;\
+    ctx_545bb8c->has_catch?\
+    (((ctx_545bb8c->has_catch=false)||ctx_545bb8c->is_error)?\
+    (((ctx_545bb8c->is_error=false),async_push_async_data(ctx_545bb8c))||true):\
+    false):\
+    false;\
     )
 
 
 #define SYNC_IN_TRY(expr) \
 do{\
-    if(!ctx->is_error)\
+    if(!ctx_545bb8c->is_error)\
     {\
         expr;\
     }\
@@ -182,15 +185,15 @@ do{\
 
 #define AWAIT(expr)\
 do{\
-    if(!ctx->is_error)\
+    if(!ctx_545bb8c->is_error)\
     {\
-        ctx->step = __LINE__;\
-        promise_await(ctx->manager,expr,async_then,ctx,false,async_catch,ctx,true);\
+        ctx_545bb8c->step = __LINE__;\
+        promise_await(ctx_545bb8c->manager,expr,async_then,ctx_545bb8c,false,async_catch,ctx_545bb8c,true);\
         return;\
     case __LINE__:\
-        if(ctx->is_error && (!ctx->has_catch))\
+        if(ctx_545bb8c->is_error && (!ctx_545bb8c->has_catch))\
         {\
-            promise_reject(ctx->manager, ctx->promise, ctx->last_async_data, ctx->last_async_data_free, ctx->last_async_data_ctx);\
+            promise_reject(ctx_545bb8c->manager, ctx_545bb8c->promise, ctx_545bb8c->last_async_data, ctx_545bb8c->last_async_data_free, ctx_545bb8c->last_async_data_ctx);\
             goto final;\
         }\
     }\
@@ -199,20 +202,20 @@ do{\
 
 #define AWAIT_RESULT(type,dst,expr)\
 do{\
-    if(!ctx->is_error)\
+    if(!ctx_545bb8c->is_error)\
     {\
-        ctx->step = __LINE__;\
-        promise_await(ctx->manager,expr,async_then,ctx,true,async_catch,ctx,true);\
+        ctx_545bb8c->step = __LINE__;\
+        promise_await(ctx_545bb8c->manager,expr,async_then,ctx_545bb8c,true,async_catch,ctx_545bb8c,true);\
         return;\
     case __LINE__:\
-        if(!ctx->is_error)\
+        if(!ctx_545bb8c->is_error)\
         {\
-            dst = ctx->last_async_data.type;\
-            async_push_async_data(ctx);\
+            dst = ctx_545bb8c->last_async_data.type;\
+            async_push_async_data(ctx_545bb8c);\
         }\
-        else if(!ctx->has_catch)\
+        else if(!ctx_545bb8c->has_catch)\
         {\
-            promise_reject(ctx->manager, ctx->promise, ctx->last_async_data, ctx->last_async_data_free, ctx->last_async_data_ctx);\
+            promise_reject(ctx_545bb8c->manager, ctx_545bb8c->promise, ctx_545bb8c->last_async_data, ctx_545bb8c->last_async_data_free, ctx_545bb8c->last_async_data_ctx);\
             goto final;\
         }\
     }\
