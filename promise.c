@@ -364,7 +364,7 @@ struct promise_group_s
 static void promise_group_free(promise_group_t* group);
 static void promise_group_free_with_ctx(void* data, void* ctx);
 
-static promise_group_t* promise_group_new(promise_manager_t* manager, int n, va_list args)
+static promise_group_t* promise_group_new(promise_manager_t* manager, int n, promise_handle_t* promises)
 {
     promise_group_t* group = malloc(sizeof(promise_group_t));
     if(!group)
@@ -394,7 +394,7 @@ static promise_group_t* promise_group_new(promise_manager_t* manager, int n, va_
 
     for(int i=0;i<n;i++)
     {
-        group->sub_promises[i].promise = va_arg(args,promise_handle_t);
+        group->sub_promises[i].promise = promises[i];
         group->sub_promises[i].index = i;
         group->sub_promises[i].group = group;
     }
@@ -459,10 +459,11 @@ static void promise_group_free_with_ctx(void* data, void* ctx)
 static void promise_all_sub_promise_then(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
 static void promise_all_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
 
-
-promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list args)
+promise_handle_t promise_all_n(promise_manager_handle_t manager, int n, promise_handle_t* promises)
 {
-    promise_group_t* all = promise_group_new(manager,n,args);
+    if(!promises)
+        return NULL;
+    promise_group_t* all = promise_group_new(manager,n,promises);
     if(!all)
         goto error;
 
@@ -485,6 +486,19 @@ error:
     return NULL;
 }
 
+promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list args)
+{
+    promise_handle_t* promises = malloc(sizeof(promise_handle_t)*n);
+    if(!promises)
+        return NULL;
+    for(int i=0; i<n; i++)
+    {
+        promises[i] = va_arg(args, promise_handle_t);
+    }
+    promise_handle_t promise = promise_all_n(manager, n, promises);
+    free(promises);
+    return promise;
+}
 
 promise_handle_t promise_all(promise_manager_handle_t manager, int n,...)
 {
@@ -525,9 +539,11 @@ static void promise_any_sub_promise_then(promise_data_t data, void* user, void(*
 static void promise_any_sub_promise_catch(promise_data_t data, void* user, void(*free_ptr)(void*, void*), void* free_ctx);
 
 
-promise_handle_t promise_any_v(promise_manager_handle_t manager, int n, va_list args)
+promise_handle_t promise_any_n(promise_manager_handle_t manager, int n, promise_handle_t* promises)
 {
-    promise_group_t* any = promise_group_new(manager,n,args);
+    if(!promises)
+        return NULL;
+    promise_group_t* any = promise_group_new(manager,n,promises);
     if(!any)
         goto error;
 
@@ -548,6 +564,20 @@ error:
     if(any)
         promise_destroy(manager,any->promise);
     return NULL;
+}
+
+promise_handle_t promise_any_v(promise_manager_handle_t manager, int n, va_list args)
+{
+    promise_handle_t* promises = malloc(sizeof(promise_handle_t)*n);
+    if(!promises)
+        return NULL;
+    for(int i=0; i<n; i++)
+    {
+        promises[i] = va_arg(args, promise_handle_t);
+    }
+    promise_handle_t promise = promise_any_n(manager, n, promises);
+    free(promises);
+    return promise;
 }
 
 

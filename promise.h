@@ -124,6 +124,7 @@ typedef struct
  */
 promise_handle_t promise_all(promise_manager_handle_t manager, int n,...);
 promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list args);
+promise_handle_t promise_all_n(promise_manager_handle_t manager, int n, promise_handle_t* promises);
 
 /**
  * @brief Create a new promise. Which:
@@ -142,6 +143,7 @@ promise_handle_t promise_all_v(promise_manager_handle_t manager, int n, va_list 
  */
 promise_handle_t promise_any(promise_manager_handle_t manager, int n,...);
 promise_handle_t promise_any_v(promise_manager_handle_t manager, int n, va_list args);
+promise_handle_t promise_any_n(promise_manager_handle_t manager, int n, promise_handle_t* promises);
 
 #endif
 
